@@ -135,16 +135,16 @@ async function handle(request, { params }) {
 
       const [leads, prebookings, paid, docsPending, allMemberships, tiers] = await Promise.all([
         sbGet('leads', 'select=id', { count: true }),
-        sbGet('checkout_orders', 'select=id&booking_type=eq.prebook', { count: true }),
-        sbGet('checkout_orders', 'select=id,base_price,addons_total,total_amount&status=eq.paid', { count: true }),
+        sbGet('checkout_orders', 'select=id&status=eq.payment_review', { count: true }),
+        sbGet('checkout_orders', 'select=id,base_price,addons_total,final_total&status=eq.paid', { count: true }),
         sbGet('documents', 'select=id&status=eq.pending', { count: true }),
         sbGet('founder_club_memberships', 'select=tier_id,status&limit=2000'),
         sbGet('founder_club_tiers', 'select=id,slug,launch_slots_total'),
       ]);
 
-      const totalRevenue = (paid.data || []).reduce((s, o) => s + Number(o.total_amount || o.base_price || 0), 0);
-      const preRevenue = await sbGet('checkout_orders', 'select=total_amount,base_price&booking_type=eq.prebook');
-      const preTotal = (preRevenue.data || []).reduce((s, o) => s + Number(o.total_amount || o.base_price || 999), 0);
+      const totalRevenue = (paid.data || []).reduce((s, o) => s + Number(o.final_total ?? o.base_price ?? 0), 0);
+      const preRevenue = await sbGet('checkout_orders', 'select=final_total,base_price&status=eq.payment_review');
+      const preTotal = (preRevenue.data || []).reduce((s, o) => s + Number(o.final_total ?? o.base_price ?? 999), 0);
 
       const pioneerTier = (tiers.data || []).find(t => t.slug === 'pioneer');
       const annualTier = (tiers.data || []).find(t => t.slug === 'annual');
@@ -262,8 +262,8 @@ async function handle(request, { params }) {
         byKey[key].name = byKey[key].name || o.customer_name;
         byKey[key].zone = o.freezone || byKey[key].zone;
         byKey[key].source = 'Portal';
-        byKey[key].status = o.status === 'paid' ? 'paid' : (o.booking_type === 'prebook' ? 'prebook' : byKey[key].status);
-        byKey[key].total_value += Number(o.total_amount || o.base_price || 0);
+        byKey[key].status = o.status === 'paid' ? 'paid' : (o.status === 'payment_review' ? 'prebook' : byKey[key].status);
+        byKey[key].total_value += Number(o.final_total ?? o.base_price ?? 0);
         byKey[key].orders.push(o);
       });
       const clients = Object.values(byKey).map(c => ({ ...c, applications: c.orders.length + c.leads.length }));
@@ -395,6 +395,46 @@ async function handle(request, { params }) {
         }
       }
       await auditLog(auth.session, 'pricing.bulk_update', { count: results.length });
+      return json({ ok: true, results });
+    }
+
+    // Per-freezone government costs (investor visa, establishment card, …)
+    if (route === '/admin/pricing/visa-costs' && method === 'GET') {
+      const auth = await requireRole(request);
+      if (!auth.ok) return json({ error: auth.error }, auth.status);
+      const r = await sbGet('freezone_pricing', 'select=*&order=freezone.asc&limit=200');
+      const byZone = {};
+      (r.data || []).forEach((row) => { byZone[row.freezone] = row; });
+      return json({
+        costs: FREEZONES.map((z) => byZone[z] || {
+          freezone: z, investor_visa_cost: 0, employee_visa_cost: 0, visa_later_cost: 0,
+          establishment_card_cost: 0, medical_emirates_id_cost: 0, renewal_cost: 0,
+          is_active: true, notes: 'not configured yet',
+        }),
+      });
+    }
+
+    if (route === '/admin/pricing/visa-costs' && method === 'PATCH') {
+      const auth = await requireRole(request, 'founder');
+      if (!auth.ok) return json({ error: auth.error }, auth.status);
+      const { updates } = await request.json();
+      const FIELDS = ['investor_visa_cost', 'employee_visa_cost', 'visa_later_cost',
+        'establishment_card_cost', 'medical_emirates_id_cost', 'renewal_cost'];
+      const results = [];
+      for (const u of updates || []) {
+        if (!u?.freezone) continue;
+        const payload = { notes: 'edited in Admin → Pricing', updated_at: new Date().toISOString() };
+        FIELDS.forEach((f) => { if (u[f] !== undefined && u[f] !== '') payload[f] = Number(u[f]); });
+        const existing = await sbGet('freezone_pricing', `select=id&freezone=eq.${encodeURIComponent(u.freezone)}&limit=1`);
+        if (existing.data && existing.data.length) {
+          await sbPatch('freezone_pricing', `id=eq.${existing.data[0].id}`, payload);
+          results.push({ zone: u.freezone, action: 'updated' });
+        } else {
+          await sbPost('freezone_pricing', { freezone: u.freezone, is_active: true, ...payload });
+          results.push({ zone: u.freezone, action: 'created' });
+        }
+      }
+      await auditLog(auth.session, 'pricing.visa_costs_update', { count: results.length });
       return json({ ok: true, results });
     }
 
@@ -855,8 +895,36 @@ async function handle(request, { params }) {
       return json(stats);
     }
 
-    if (route === '/admin/support-analytics' && method === 'GET') {
+    // Aria auto-reply gate config (shared Mongo doc with the FastAPI backend)
+    if (route === '/admin/ai-support/config' && (method === 'GET' || method === 'PATCH')) {
       const auth = await requireRole(request);
+      if (!auth.ok) return json({ error: auth.error }, auth.status);
+      const cfgCol = await col('ai_support_config');
+      const DEFAULTS = {
+        mode: 'SUGGEST_ONLY',
+        confidence_threshold: 0.8,
+        allowed_categories: ['general'],
+        blocked_categories: ['payment', 'visa', 'compliance', 'foundersclub', 'account'],
+        allowed_priorities: ['low', 'medium'],
+        auto_resolve: true,
+      };
+      if (method === 'PATCH') {
+        const body = await request.json();
+        const ALLOWED_KEYS = ['mode', 'confidence_threshold', 'allowed_categories', 'blocked_categories', 'allowed_priorities', 'auto_resolve'];
+        const patch = {};
+        for (const k of ALLOWED_KEYS) if (body[k] !== undefined) patch[k] = body[k];
+        if (patch.mode && !['DISABLED', 'SUGGEST_ONLY', 'AUTO_REPLY'].includes(patch.mode)) {
+          return json({ error: 'Invalid mode' }, 400);
+        }
+        patch.updated_at = new Date().toISOString();
+        await cfgCol.updateOne({ _id: 'singleton' }, { $set: patch }, { upsert: true });
+        await auditLog(auth.session, 'ai_support.config.update', patch);
+      }
+      const doc = await cfgCol.findOne({ _id: 'singleton' });
+      return json({ ...DEFAULTS, ...(doc || {}) });
+    }
+
+    if (route === '/admin/support-analytics' && method === 'GET') {      const auth = await requireRole(request);
       if (!auth.ok) return json({ error: auth.error }, auth.status);
       const days = Number(new URL(request.url).searchParams.get('days') || 30);
       const data = await getSupportAnalytics(days);
@@ -960,7 +1028,12 @@ async function handle(request, { params }) {
       }
 
       if (sub === 'attachments' && path[4] === 'sign-upload' && method === 'POST') {
-        const { filename, content_type } = await request.json();
+        const { filename, content_type, size } = await request.json();
+        const ct = String(content_type || '').toLowerCase().split(';')[0].trim();
+        const ALLOWED = ['image/png', 'image/jpeg', 'image/webp', 'application/pdf'];
+        const MAX = 10 * 1024 * 1024;
+        if (!ALLOWED.includes(ct)) return json({ error: `File type '${ct}' not allowed.` }, 400);
+        if (Number(size) > MAX) return json({ error: 'File too large. Max 10 MB.' }, 400);
         const bucket = process.env.SUPPORT_ATTACHMENTS_BUCKET || 'support-attachments';
         const t = await getTicket(ticketId);
         const safe = String(filename || 'file').replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 120);

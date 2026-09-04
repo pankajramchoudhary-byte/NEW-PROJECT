@@ -153,11 +153,15 @@ export default function AISearch({ autoQuery = '', hideSearchBar = false }) {
   };
 
   const goToCheckout = (leadId) => {
+    // Checkout matches on package_id first, then zone slug — send both so the
+    // AI-recommended zone/package is actually pre-selected (a zone *name* alone
+    // never matched, which made "Start Application" look broken).
+    const best = result?.options?.[0] || null;
     const params = new URLSearchParams({
       source: 'ai-search',
       activity: result?.activity || selectedActivity?.activity_name || q,
       activity_code: result?.activityCode || '',
-      freezone: result?.bestZone || '',
+      freezone: best?.zone_slug || result?.bestZone || '',
       name: lead.name || '',
       email: lead.email || '',
       phone_code: lead.countryCode || '+971',
@@ -165,6 +169,7 @@ export default function AISearch({ autoQuery = '', hideSearchBar = false }) {
       nationality: lead.nationality || '',
       residence_country: lead.residenceCountry || '',
     });
+    if (best?.package_id) params.set('package', best.package_id);
     if (leadId) params.set('lead_id', leadId);
     navigate(`/checkout?${params.toString()}`);
   };
@@ -177,14 +182,17 @@ export default function AISearch({ autoQuery = '', hideSearchBar = false }) {
       return;
     }
     setSavingLead(true);
+    // Lead capture must never block the application — if Supabase rejects the
+    // insert we still take the customer to checkout with their details.
+    let savedId;
     try {
       const saved = await captureAILead(lead, result, 'ai_search_start_application');
-      goToCheckout(saved?.id);
+      savedId = saved?.id;
     } catch (err) {
-      setLeadError(err.message || 'Could not save lead. Please check Supabase leads table/RLS.');
-    } finally {
-      setSavingLead(false);
+      console.warn('[ai-search] lead capture failed, continuing to checkout', err);
     }
+    setSavingLead(false);
+    goToCheckout(savedId);
   };
 
   return (
@@ -272,7 +280,12 @@ export default function AISearch({ autoQuery = '', hideSearchBar = false }) {
                     <button
                       key={opt.zone_slug || opt.zone_name}
                       type="button"
-                      onClick={() => navigate(`/checkout?freezone=${encodeURIComponent(opt.zone_slug || '')}&package=${encodeURIComponent(opt.package_id || '')}&activity=${encodeURIComponent(result.activity)}`)}
+                      onClick={() => {
+                        const sp = new URLSearchParams({ activity: result.activity, source: 'ai-search' });
+                        if (opt.zone_slug) sp.set('freezone', opt.zone_slug);
+                        if (opt.package_id) sp.set('package', opt.package_id);
+                        navigate(`/checkout?${sp.toString()}`);
+                      }}
                       data-testid={`ai-zone-rank-${idx}`}
                       className={`relative text-left p-5 rounded-2xl border transition-all hover:shadow-lg hover:-translate-y-0.5 ${
                         idx === 0

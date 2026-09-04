@@ -1,8 +1,12 @@
 import { postgrestValue, supabaseRest } from './supabaseRest';
 
 const PREBOOKING_AMOUNT_AED = 999;
-const VISA_PRICE_AED = 5912;
+const VISA_PRICE_AED = 5912;   // fallback only — live values come from freezone_pricing
 const DEFAULT_SERVICE_FEE_AED = 1500;
+
+// freezone slug -> government cost row (investor visa, establishment card, …).
+// Populated by loadCheckoutPricing() so pricing is never hardcoded per zone.
+let visaPricingByZone = {};
 
 function slugify(value = '') {
   return String(value)
@@ -107,7 +111,7 @@ async function selectFirstWorkingTable(candidates) {
 }
 
 export async function loadCheckoutPricing() {
-  const [packagesResult, addonsResult] = await Promise.all([
+  const [packagesResult, addonsResult, visaPricingRows] = await Promise.all([
     selectFirstWorkingTable([
       { table: 'checkout_package_options', query: '?select=*', normalize: normalizePackage },
       { table: 'freezone_packages', query: '?select=*&is_active=eq.true', normalize: normalizePackage },
@@ -120,7 +124,14 @@ export async function loadCheckoutPricing() {
       { table: 'package_addons', query: '?select=*&is_active=eq.true', normalize: normalizeAddon },
       { table: 'package_addons', query: '?select=*', normalize: normalizeAddon },
     ]).catch(() => ({ table: null, rows: [] })),
+    supabaseRest.select('freezone_pricing', '?select=*').catch(() => []),
   ]);
+
+  visaPricingByZone = Object.fromEntries(
+    (visaPricingRows || [])
+      .filter((row) => row.is_active !== false)
+      .map((row) => [slugify(row.freezone || ''), row]),
+  );
 
   const zones = uniqueBy(packagesResult.rows, (item) => item.package_id || item.selection_id)
     // Hide renewal packages — checkout is for NEW registrations
@@ -175,6 +186,7 @@ function buildOrderPayload(draft, totalAed, user) {
   return {
     id: newUuid(),
     reference,
+    order_ref: reference,   // persisted column — keeps admin + dashboard refs identical
     customer_name: contact.name || null,
     customer_email: contact.email || null,
     customer_phone: contact.phone ? `${contact.phone_code || ''} ${contact.phone}`.trim() : null,
@@ -256,8 +268,14 @@ export async function listUserOrders(email) {
   }
 }
 
-export function getVisaPrice() {
-  return VISA_PRICE_AED;
+export function getVisaPrice(freezone, kind = 'investor') {
+  const row = visaPricingByZone[slugify(freezone || '')];
+  const price = kind === 'employee' ? row?.employee_visa_cost : row?.investor_visa_cost;
+  return money(price, 0) > 0 ? money(price) : VISA_PRICE_AED;
+}
+
+export function getZoneGovCosts(freezone) {
+  return visaPricingByZone[slugify(freezone || '')] || null;
 }
 
 export function getDefaultServiceFee() {

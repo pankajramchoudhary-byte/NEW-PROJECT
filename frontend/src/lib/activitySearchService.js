@@ -36,6 +36,53 @@ export function normalizeActivity(row = {}) {
   };
 }
 
+function escapeRegex(s = '') {
+  return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Relevance ranking for activity rows.
+ * Postgres `ilike *term*` matches anywhere in name/keywords, which pushed long,
+ * loosely-related rows to the top (alphabetical). We re-rank client-side:
+ * exact > starts-with > whole-word > substring, plus per-word hits, and we
+ * de-duplicate identical activity names across authorities.
+ */
+export function rankActivities(rows = [], term = '') {
+  const t = String(term || '').toLowerCase().trim();
+  if (!t) return rows;
+  const words = t.split(/\s+/).filter((w) => w.length > 1);
+
+  const scoreOf = (r) => {
+    const name = String(r.activity_name || '').toLowerCase();
+    const code = String(r.activity_code || '').toLowerCase();
+    let s = 0;
+    if (name === t) s += 120;
+    else if (name.startsWith(t)) s += 80;
+    else if (new RegExp(`\\b${escapeRegex(t)}\\b`).test(name)) s += 60;
+    else if (name.includes(t)) s += 30;
+    if (code === t) s += 130;
+    else if (code.startsWith(t)) s += 45;
+    const hits = words.filter((w) => new RegExp(`\\b${escapeRegex(w)}`).test(name)).length;
+    s += hits * 14;
+    if (words.length > 1 && hits === words.length) s += 20;
+    if (words.some((w) => String(r.industry_group || '').toLowerCase().includes(w))) s += 6;
+    if (words.some((w) => String(r.keywords || '').toLowerCase().includes(w))) s += 3;
+    s -= Math.min(12, Math.floor(name.length / 40)); // prefer concise, precise names
+    return s;
+  };
+
+  const best = new Map();
+  rows.forEach((r) => {
+    const key = String(r.activity_name || '').toLowerCase();
+    const sc = scoreOf(r);
+    const cur = best.get(key);
+    if (!cur || sc > cur.sc) best.set(key, { r, sc });
+  });
+  const ranked = [...best.values()].sort((a, b) => b.sc - a.sc);
+  const strong = ranked.filter((x) => x.sc > 0);
+  return (strong.length ? strong : ranked).map((x) => x.r);
+}
+
 export async function searchActivities(term, { freezone, limit = 20 } = {}) {
   const cleaned = escapeLike(term);
   const filters = ['is_active=eq.true'];
@@ -49,9 +96,12 @@ export async function searchActivities(term, { freezone, limit = 20 } = {}) {
     filters.push(`or=(activity_name.ilike.${q},activity_code.ilike.${q},industry_group.ilike.${q},keywords.ilike.${q})`);
   }
 
-  const query = `?select=${ACTIVITY_COLUMNS}&${filters.join('&')}&order=activity_name.asc&limit=${limit}`;
+  // Over-fetch so ranking has candidates to choose from, then trim to `limit`.
+  const fetchLimit = Math.min(240, Math.max(limit * 6, 60));
+  const query = `?select=${ACTIVITY_COLUMNS}&${filters.join('&')}&order=activity_name.asc&limit=${fetchLimit}`;
   const data = await supabaseRest.select('activities_master', query);
-  return (data || []).map(normalizeActivity);
+  const rows = (data || []).map(normalizeActivity);
+  return rankActivities(rows, term).slice(0, limit);
 }
 
 function detectIndustry(text = '') {
@@ -283,6 +333,28 @@ export function buildRecommendation(activity, livePackages = []) {
     reasons: x.reasons,
     raw: x.p,
   }));
+
+  // Regulated activity with no live package for an authorised zone → still show
+  // the authorised jurisdictions as (unpriced) options so the customer sees the
+  // exact right answer instead of a generic zone.
+  if (regulatedCfg && top3.length === 0) {
+    regulatedCfg.allowedSlugs.slice(0, 3).forEach((s, idx) => {
+      top3.push({
+        zone_name: s.toUpperCase(),
+        zone_slug: s,
+        package_name: null,
+        package_id: null,
+        gov: 0,
+        svc: 0,
+        processing_time: '2–4 weeks',
+        visa_quota: null,
+        activities_allowed: null,
+        score: 95 - idx * 8,
+        reasons: [regulatedCfg.label],
+        raw: {},
+      });
+    });
+  }
 
   const fallbackBest = row.freezone && row.freezone !== 'All' ? row.freezone : 'Meydan FZ';
   const bestZone = top3[0]?.zone_name || (regulatedCfg ? regulatedCfg.allowedSlugs[0].toUpperCase() : fallbackBest);

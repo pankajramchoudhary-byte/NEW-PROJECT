@@ -45,9 +45,13 @@ HIGH_RISK_PATTERNS = [
 DEFAULT_CONFIG = {
     "_id": "singleton",
     "mode": "SUGGEST_ONLY",          # DISABLED | SUGGEST_ONLY | AUTO_REPLY
-    "confidence_threshold": 0.90,
-    "allowed_categories": ["general", "technical"],
-    "blocked_categories": ["payment", "visa", "compliance", "foundersclub"],
+    "confidence_threshold": 0.80,
+    "allowed_categories": ["general"],
+    "blocked_categories": ["payment", "visa", "compliance", "foundersclub", "account"],
+    # Gated auto-reply also requires a low-risk ticket priority.
+    "allowed_priorities": ["low", "medium"],
+    # When an auto-reply is sent, mark the ticket resolved (Aria handled it).
+    "auto_resolve": True,
     "updated_at": datetime.now(timezone.utc).isoformat(),
 }
 
@@ -72,7 +76,8 @@ async def get_config() -> Dict[str, Any]:
     if _config is None:
         return DEFAULT_CONFIG
     c = await _config.find_one({"_id": "singleton"})
-    return c or DEFAULT_CONFIG
+    # Merge so config docs created before a new key was introduced still work.
+    return {**DEFAULT_CONFIG, **(c or {})}
 
 
 def _is_high_risk(text: str) -> bool:
@@ -103,7 +108,8 @@ Return a JSON object with fields:
 
 
 async def suggest_reply(*, subject: str, latest_message: str,
-                        ticket_id: str, history: Optional[List[Dict[str, str]]] = None
+                        ticket_id: str, history: Optional[List[Dict[str, str]]] = None,
+                        priority: str = "medium", ticket_category: Optional[str] = None,
                         ) -> Dict[str, Any]:
     """Generate a suggestion and log it. Returns the parsed suggestion."""
     cfg = await get_config()
@@ -163,12 +169,19 @@ async def suggest_reply(*, subject: str, latest_message: str,
     # Determine action
     action = "suggested"
     if cfg.get("mode") == "AUTO_REPLY":
-        cat = parsed.get("category", "other")
+        # Gate: category must be allow-listed (both the ticket's own category and
+        # the AI-detected one), priority must be low-risk, confidence above the
+        # threshold, and the AI must not have asked for a human.
         allowed = set(cfg.get("allowed_categories") or [])
         blocked = set(cfg.get("blocked_categories") or [])
+        prios = set(cfg.get("allowed_priorities") or ["low", "medium"])
+        cats = {parsed.get("category", "other")}
+        if ticket_category:
+            cats.add(ticket_category)
         conf = parsed.get("confidence") or 0
-        thresh = float(cfg.get("confidence_threshold") or 0.9)
-        if (cat in allowed and cat not in blocked
+        thresh = float(cfg.get("confidence_threshold") or 0.8)
+        if (cats and cats.issubset(allowed) and not (cats & blocked)
+                and (priority or "medium") in prios
                 and conf >= thresh and not parsed.get("requires_human")):
             action = "auto_reply_eligible"
 
@@ -219,8 +232,8 @@ async def get_conf(authorization: Optional[str] = Header(default=None)):
 async def patch_conf(patch: Dict[str, Any],
                      authorization: Optional[str] = Header(default=None)):
     await _require_admin(authorization)
-    allowed = {"mode", "confidence_threshold",
-               "allowed_categories", "blocked_categories"}
+    allowed = {"mode", "confidence_threshold", "allowed_categories",
+               "blocked_categories", "allowed_priorities", "auto_resolve"}
     filtered = {k: v for k, v in patch.items() if k in allowed}
     if "mode" in filtered and filtered["mode"] not in {"DISABLED", "SUGGEST_ONLY", "AUTO_REPLY"}:
         raise HTTPException(400, "Invalid mode")
@@ -265,4 +278,6 @@ async def suggest_endpoint(ticket_id: str,
         latest_message=latest,
         ticket_id=ticket_id,
         history=history,
+        priority=t.get("priority", "medium"),
+        ticket_category=t.get("category"),
     )

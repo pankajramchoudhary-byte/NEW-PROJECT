@@ -148,7 +148,7 @@ export default function CostCalculator() {
     if (visas > 0) {
       items.push({
         l: `Investor visa setup × ${visas}`,
-        v: getVisaPrice() * visas,
+        v: getVisaPrice(zone?.name) * visas,
         type: 'gov',
       });
     }

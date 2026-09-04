@@ -6,7 +6,7 @@ import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Textarea } from '../components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
-import { Send, Plus, LifeBuoy, Clock, CheckCircle2, ChevronLeft, AlertTriangle, Paperclip, X, FileText } from 'lucide-react';
+import { Send, Plus, LifeBuoy, Clock, CheckCircle2, ChevronLeft, AlertTriangle, Paperclip, X, FileText, Image as ImageIcon } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabaseClient';
 
@@ -153,6 +153,62 @@ function NewTicket({ onCreated }) {
   );
 }
 
+function fmtSize(n) {
+  const b = Number(n || 0);
+  if (!b) return '';
+  if (b < 1024) return `${b} B`;
+  if (b < 1048576) return `${Math.round(b / 1024)} KB`;
+  return `${(b / 1048576).toFixed(1)} MB`;
+}
+
+// Image attachments render as a thumbnail (signed URL, 1h TTL); everything else
+// gets a file chip. Both show a size badge.
+function AttachmentChip({ att, sign }) {
+  const [url, setUrl] = useState('');
+  const isImage = String(att.content_type || '').startsWith('image/')
+    || /\.(png|jpe?g|webp|gif)$/i.test(att.name || att.path || '');
+
+  useEffect(() => {
+    let dead = false;
+    if (!isImage) return undefined;
+    sign(att.path).then((u) => { if (!dead && u) setUrl(u); });
+    return () => { dead = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [att.path, isImage]);
+
+  const open = async () => {
+    const u = url || (await sign(att.path));
+    if (u) window.open(u, '_blank', 'noopener');
+  };
+
+  if (isImage) {
+    return (
+      <button onClick={open} className="group relative block rounded-xl overflow-hidden border border-slate-200 hover:border-emerald-500 transition-colors"
+              data-testid={`attachment-${att.path}`}>
+        {url ? (
+          <img src={url} alt={att.name || 'attachment'} className="h-24 w-32 object-cover" />
+        ) : (
+          <div className="h-24 w-32 grid place-items-center bg-slate-100 text-slate-400"><ImageIcon className="h-5 w-5" /></div>
+        )}
+        <span className="absolute bottom-1 right-1 rounded-md bg-slate-900/75 px-1.5 py-0.5 text-[10px] font-semibold text-white">
+          {fmtSize(att.size) || 'image'}
+        </span>
+      </button>
+    );
+  }
+
+  return (
+    <button
+      onClick={open}
+      className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-[11.5px] font-medium text-slate-700 hover:border-emerald-500 hover:text-emerald-700 transition-colors"
+      data-testid={`attachment-${att.path}`}
+    >
+      <FileText className="h-3.5 w-3.5" /> {att.name || 'file'}
+      {att.size ? <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-500">{fmtSize(att.size)}</span> : null}
+    </button>
+  );
+}
+
 function TicketThread({ id, onBack }) {
   const [ticket, setTicket] = useState(null);
   const [msgs, setMsgs] = useState([]);
@@ -184,16 +240,16 @@ function TicketThread({ id, onBack }) {
     return () => { try { supabase.removeChannel(channel); } catch { /* noop */ } };
   }, [id, load]);
 
-  const openAttachment = async (path) => {
+  const signAttachment = useCallback(async (path) => {
     try {
       const headers = { 'Content-Type': 'application/json', ...(await authHeaders()) };
       const r = await fetch(`${API}/tickets/${id}/attachments/sign-download`, {
         method: 'POST', headers, body: JSON.stringify({ path }),
       });
       const j = await r.json();
-      if (j.signed_url) window.open(j.signed_url, '_blank', 'noopener');
-    } catch { /* noop */ }
-  };
+      return j.signed_url || '';
+    } catch { return ''; }
+  }, [id]);
 
   const uploadOne = async (file) => {
     const headers = { 'Content-Type': 'application/json', ...(await authHeaders()) };
@@ -255,16 +311,9 @@ function TicketThread({ id, onBack }) {
             </div>
             <div className="whitespace-pre-wrap text-slate-800">{m.body}</div>
             {Array.isArray(m.attachments) && m.attachments.length > 0 && (
-              <div className="mt-2 flex flex-wrap gap-2" data-testid="msg-attachments">
+              <div className="mt-2 flex flex-wrap items-end gap-2" data-testid="msg-attachments">
                 {m.attachments.map((a, k) => (
-                  <button
-                    key={k}
-                    onClick={() => openAttachment(a.path)}
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-[11.5px] font-medium text-slate-700 hover:border-emerald-500 hover:text-emerald-700 transition-colors"
-                    data-testid={`attachment-${a.path}`}
-                  >
-                    <FileText className="h-3.5 w-3.5" /> {a.name || 'file'}
-                  </button>
+                  <AttachmentChip key={k} att={a} sign={signAttachment} />
                 ))}
               </div>
             )}
@@ -286,6 +335,7 @@ function TicketThread({ id, onBack }) {
               {files.map((f, i) => (
                 <span key={i} className="inline-flex items-center gap-1.5 rounded-lg bg-slate-100 border border-slate-200 px-2 py-1 text-[11.5px] text-slate-700">
                   <FileText className="h-3.5 w-3.5" /> {f.name}
+                  <span className="text-[10px] text-slate-500 font-semibold">{fmtSize(f.size)}</span>
                   <button onClick={() => setFiles(files.filter((_, k) => k !== i))} className="text-slate-400 hover:text-rose-600" data-testid={`remove-file-${i}`}>
                     <X className="h-3 w-3" />
                   </button>

@@ -80,3 +80,12 @@ memory/test_credentials.md
 
 # Mobile development
 android-sdk/frontend/node_modules/.cache/default-development/0.pack
+.env
+.env.*
+*.env
+credentials.json
+*.key
+.credentials
+frontend/node_modules/.cache/default-development/10.pack
+admin/node_modules/@next/swc-linux-arm64-musl/next-swc.linux-arm64-musl.node
+admin/node_modules/@next/swc-linux-arm64-gnu/next-swc.linux-arm64-gnu.node

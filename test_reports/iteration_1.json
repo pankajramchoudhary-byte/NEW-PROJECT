@@ -1,0 +1,34 @@
+{
+  "summary": "Tested SmartSetupUAE auto-reply gating, ticket creation with AI suggestion, attachment sign-upload validation, Aria smart-rank ranking, support analytics gating (backend, pytest 8/8 passing), AND frontend AI search relevance, VARA/crypto regulated notice, Start Application → /checkout flow, ranked-card → /checkout pre-select flow, and mobile responsiveness of /ai-search at 390px. All requested backend and frontend flows work. Checkout ↔ dashboard alignment could not be fully exercised end-to-end because no test Supabase customer credential was available, but a static code review confirms buildOrderPayload persists order_ref and Dashboard reads final_total/freezone/package_name/order_ref as documented.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/ai-search desktop", "issues": ["Aria widget (bottom-right) + 'Need help choosing?' popup can overlap the Start Application button on smaller viewports — tests must scroll or force-click; regular users may find it obscures the CTA."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_support_ai_auto_reply.py",
+    "/app/test_reports/pytest/support_ai_auto_reply.xml"
+  ],
+  "action_items": [
+    "(Optional) Consider auto-hiding the Aria widget / 'Need help choosing?' popup while the /ai-search lead-capture form is expanded — currently they sit over the Continue-to-Application button and need force clicks / scroll into view.",
+    "Manual/next-iteration: sign in as a real Supabase customer, complete checkout step 1→2, and verify /dashboard order card shows the reference + final_total (order_ref, final_total, freezone, package_name). Code path looks correct but wasn't exercised live in this run because no test customer credential was provided."
+  ],
+  "critical_code_review_comments": [
+    "backend/support.py list_for_user() returns None (function ends with `rows = [...]` but never returns rows). Not part of this iteration's tested flows but a real bug for the customer-portal tickets list.",
+    "backend/support.py sign_upload() uses SUPPORT_BUCKET = env at import time and env now points to 'cilents-documents' (typo in bucket name but that matches the actual Supabase bucket per session notes — flag for awareness).",
+    "ai_support.py auto-reply gate requires BOTH the ticket's `category` AND the AI-detected `category` to be in allowed_categories AND not in blocked_categories. If the AI classifies a general question as 'other', the gate will refuse to auto-reply even for a general low-priority ticket. This is intentionally conservative but worth documenting for admins tuning the config."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_support_ai_auto_reply.py (new)"
+  ],
+  "success_rate": { "backend": "100% (8/8 pytest)", "frontend": "100% of tested flows (AI search relevance, VARA notice, Start Application → checkout, ranked-card → checkout, mobile 390px no overflow)" },
+  "test_credentials": "Used only anonymous flows and Mongo direct writes for AUTO_REPLY toggle. Supabase JWT was not available so attachment sign-upload was verified via 403/404 negative paths only, matching the request's fallback.",
+  "seed_data_creation": "Created ~5 TEST_-prefixed tickets in Mongo support_tickets (subjects begin with 'TEST_'). Also toggled ai_support_config singleton to AUTO_REPLY during tests and restored to SUGGEST_ONLY (confidence_threshold=0.8, allowed_categories=['general'], allowed_priorities=['low','medium']) at the end of each test.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Backend pytest lives at /app/backend/tests/test_support_ai_auto_reply.py. It flips the ai_support_config singleton between AUTO_REPLY and SUGGEST_ONLY — always resets afterwards. Aria smart-rank response shape is {top:[{zone,package,price_aed,speed,score,reason},...], summary}. Start Application flow proved: URL becomes /checkout?...freezone=<slug>&package=<uuid>&lead_id=<uuid>, and Order Summary matches the AI card exactly (DMCC · Nook Package · AED 10,345 for Gold Trading). Ranked-card click on ai-zone-rank-1 correctly pre-selects RAKEZ (Basic Instant Licence · AED 6,000). VARA/crypto regulated notice ([data-testid=ai-regulated-notice]) shows correctly for VARA/virtual-assets queries and the top-ranked zone is DMCC. Software Development gives RAKEZ/SHAMS/ANCFZ (no DMCC), Gold Trading gives DMCC/RAKEZ/IFZA. Mobile 390px: no horizontal overflow, cards stack.",
+  "rca of the issue": "N/A — no bugs surfaced during this round of tests."
+}

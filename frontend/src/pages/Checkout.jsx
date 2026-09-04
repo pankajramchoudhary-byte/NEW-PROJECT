@@ -264,7 +264,7 @@ export default function Checkout() {
   const breakdown = useMemo(() => {
     const items = [
       { l: `${draft.zone_name || currentZone?.name || 'Selected package'} — Trade Licence (Year 1)`, v: currentZone?.gov || 0, type: 'zone', slug: currentZone?.slug },
-      ...(draft.visa_count > 0 ? [{ l: `Investor visa x ${draft.visa_count}`, v: getVisaPrice() * draft.visa_count, type: 'visa', count: draft.visa_count }] : []),
+      ...(draft.visa_count > 0 ? [{ l: `Investor visa x ${draft.visa_count}`, v: getVisaPrice(draft.zone_name) * draft.visa_count, type: 'visa', count: draft.visa_count }] : []),
       ...draft.addons.map((a) => ({ l: a.label, v: a.price, type: 'addon', id: a.id })),
       ...(packageDiscount > 0 ? [{ l: `${selectedCoupon.code} discount`, v: -packageDiscount, type: 'discount' }] : []),
       ...(nameReservation.fee > 0

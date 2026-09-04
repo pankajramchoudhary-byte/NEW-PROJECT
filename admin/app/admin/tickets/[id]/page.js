@@ -4,7 +4,7 @@ import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import {
   ArrowLeft, Send, Clock, CheckCircle, XCircle, Circle,
-  User, Shield, StickyNote, ChevronDown, Loader2, Paperclip, X, Sparkles,
+  User, Shield, StickyNote, ChevronDown, Loader2, Paperclip, X, Sparkles, Image as ImageIcon,
 } from 'lucide-react';
 
 // ─── Config ──────────────────────────────────────────────────────────────────
@@ -38,6 +38,57 @@ function fmt(date) {
     day: 'numeric', month: 'short', year: 'numeric',
     hour: '2-digit', minute: '2-digit',
   });
+}
+
+function fmtSize(n) {
+  const b = Number(n || 0);
+  if (!b) return '';
+  if (b < 1024) return `${b} B`;
+  if (b < 1048576) return `${Math.round(b / 1024)} KB`;
+  return `${(b / 1048576).toFixed(1)} MB`;
+}
+
+function AttachmentChip({ att, sign }) {
+  const [url, setUrl] = useState('');
+  const isImage = String(att.content_type || '').startsWith('image/')
+    || /\.(png|jpe?g|webp|gif)$/i.test(att.name || att.path || '');
+
+  useEffect(() => {
+    let dead = false;
+    if (!isImage) return undefined;
+    sign(att.path).then((u) => { if (!dead && u) setUrl(u); });
+    return () => { dead = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [att.path, isImage]);
+
+  const open = async () => {
+    const u = url || (await sign(att.path));
+    if (u) window.open(u, '_blank', 'noopener');
+  };
+
+  if (isImage) {
+    return (
+      <button onClick={open} data-testid={`attachment-${att.path}`}
+        className="relative block rounded-xl overflow-hidden border border-slate-200 hover:border-emerald-500 transition-colors">
+        {url ? (
+          <img src={url} alt={att.name || 'attachment'} className="h-24 w-32 object-cover" />
+        ) : (
+          <div className="h-24 w-32 grid place-items-center bg-slate-100 text-slate-400"><ImageIcon className="w-4 h-4" /></div>
+        )}
+        <span className="absolute bottom-1 right-1 rounded-md bg-slate-900/75 px-1.5 py-0.5 text-[10px] font-semibold text-white">
+          {fmtSize(att.size) || 'image'}
+        </span>
+      </button>
+    );
+  }
+
+  return (
+    <button onClick={open} data-testid={`attachment-${att.path}`}
+      className="inline-flex items-center gap-1 rounded-lg border border-slate-300 bg-white px-2 py-1 text-[11px] font-medium text-slate-700 hover:border-emerald-500 hover:text-emerald-700">
+      <Paperclip className="w-3 h-3" /> {att.name || 'file'}
+      {att.size ? <span className="rounded bg-slate-100 px-1 py-0.5 text-[10px] font-semibold text-slate-500">{fmtSize(att.size)}</span> : null}
+    </button>
+  );
 }
 
 // ─── Page ────────────────────────────────────────────────────────────────────
@@ -87,21 +138,21 @@ export default function TicketDetailPage() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [ticket?.messages]);
 
-  const openAttachment = async (objPath) => {
+  const signAttachment = async (objPath) => {
     try {
       const r = await fetch(`/api/admin/tickets/${id}/attachments/sign-download`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
         body: JSON.stringify({ path: objPath }),
       });
       const d = await r.json();
-      if (d.signed_url) window.open(d.signed_url, '_blank', 'noopener');
-    } catch {}
+      return d.signed_url || '';
+    } catch { return ''; }
   };
 
   const uploadOne = async (file) => {
     const signRes = await fetch(`/api/admin/tickets/${id}/attachments/sign-upload`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
-      body: JSON.stringify({ filename: file.name, content_type: file.type || 'application/octet-stream' }),
+      body: JSON.stringify({ filename: file.name, content_type: file.type || 'application/octet-stream', size: file.size }),
     });
     const sign = await signRes.json();
     if (!signRes.ok) throw new Error(sign.error || 'Upload rejected');
@@ -224,12 +275,9 @@ export default function TicketDetailPage() {
                     {msg.message}
                   </div>
                   {Array.isArray(msg.attachments) && msg.attachments.length > 0 && (
-                    <div className={`mt-1.5 flex flex-wrap gap-1.5 ${msg.sender === 'admin' ? 'justify-end' : ''}`}>
+                    <div className={`mt-1.5 flex flex-wrap items-end gap-1.5 ${msg.sender === 'admin' ? 'justify-end' : ''}`}>
                       {msg.attachments.map((a, k) => (
-                        <button key={k} onClick={() => openAttachment(a.path)}
-                          className="inline-flex items-center gap-1 rounded-lg border border-slate-300 bg-white px-2 py-1 text-[11px] font-medium text-slate-700 hover:border-emerald-500 hover:text-emerald-700">
-                          <Paperclip className="w-3 h-3" /> {a.name || 'file'}
-                        </button>
+                        <AttachmentChip key={k} att={a} sign={signAttachment} />
                       ))}
                     </div>
                   )}
@@ -320,6 +368,7 @@ export default function TicketDetailPage() {
                   {files.map((f, i) => (
                     <span key={i} className="inline-flex items-center gap-1 rounded-lg bg-slate-100 border border-slate-200 px-2 py-1 text-[11px] text-slate-700">
                       {f.name}
+                      <span className="text-[10px] font-semibold text-slate-500">{fmtSize(f.size)}</span>
                       <button onClick={() => setFiles(files.filter((_, k) => k !== i))} className="text-slate-400 hover:text-rose-600"><X className="w-3 h-3" /></button>
                     </span>
                   ))}

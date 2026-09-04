@@ -254,7 +254,7 @@ export default function Dashboard() {
         <div className="max-w-7xl mx-auto px-5 lg:px-8 grid lg:grid-cols-3 gap-6">
           {/* LEFT — Founder Portal (full lifecycle: tracker / appts / vault / compliance / renewals / invoices) */}
           <div className="lg:col-span-2 space-y-6">
-            <FounderPortal orderRef={activeOrder?.reference || activeOrder?.id} />
+            <FounderPortal orderRef={activeOrder?.order_ref || activeOrder?.reference || activeOrder?.id} />
 
             {/* My Orders */}
             <div className="card-elevated rounded-2xl p-6" data-testid="dash-orders">
@@ -285,11 +285,11 @@ export default function Dashboard() {
                       >
                         <div className="flex items-center justify-between gap-2 flex-wrap">
                           <div className="min-w-0">
-                            <div className="font-display text-sm font-semibold text-slate-900 truncate">{o.zone_name || 'UAE Setup Order'}</div>
-                            <div className="text-[11px] text-slate-500 truncate">Ref: <span className="font-mono">{o.reference || o.id?.slice(0, 8)}</span> · {new Date(o.created_at || Date.now()).toLocaleDateString()}</div>
+                            <div className="font-display text-sm font-semibold text-slate-900 truncate">{o.freezone || o.zone_name || 'UAE Setup Order'}{o.package_name ? ` — ${o.package_name}` : ''}</div>
+                            <div className="text-[11px] text-slate-500 truncate">Ref: <span className="font-mono">{o.order_ref || o.reference || o.id?.slice(0, 8)}</span> · {new Date(o.created_at || Date.now()).toLocaleDateString()}</div>
                           </div>
                           <div className="text-right shrink-0">
-                            <div className="font-mono font-bold text-slate-900">AED {Number(o.total_aed || 0).toLocaleString()}</div>
+                            <div className="font-mono font-bold text-slate-900">AED {Number(o.final_total ?? o.total_aed ?? 0).toLocaleString()}</div>
                             <span className={`mt-0.5 inline-block text-[9px] font-bold uppercase px-2 py-0.5 rounded-full border ${m.tone}`}>{m.label}</span>
                           </div>
                         </div>
@@ -305,8 +305,12 @@ export default function Dashboard() {
               <div className="card-elevated rounded-2xl p-6" data-testid="dash-timeline">
                 <div className="flex items-center justify-between gap-2 flex-wrap mb-1">
                   <div>
-                    <div className="font-display text-lg font-semibold text-slate-900">{activeOrder.zone_name || 'Application'}</div>
-                    <div className="text-[11px] text-slate-500">Ref: <span className="font-mono">{activeOrder.reference}</span></div>
+                    <div className="font-display text-lg font-semibold text-slate-900">{activeOrder.freezone || activeOrder.zone_name || 'Application'}</div>
+                    <div className="text-[11px] text-slate-500">
+                      Ref: <span className="font-mono">{activeOrder.order_ref || activeOrder.reference || activeOrder.id?.slice(0, 8)}</span>
+                      {activeOrder.package_name ? <> · {activeOrder.package_name}</> : null}
+                      {' · '}<span className="font-semibold text-slate-700">AED {Number(activeOrder.final_total ?? activeOrder.total_aed ?? 0).toLocaleString()}</span>
+                    </div>
                   </div>
                   <span className={`text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full border ${meta.tone}`}>{meta.label}</span>
                 </div>

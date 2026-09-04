@@ -346,10 +346,10 @@ export default function AdminPanel() {
                     {orders.map((o) => (
                       <tr key={o.id || o.reference} className="border-b border-slate-100">
                         <td className="py-3 text-slate-500">{o.created_at ? new Date(o.created_at).toLocaleString() : '-'}</td>
-                        <td className="font-mono font-semibold">{o.reference || o.id?.slice(0,8)}</td>
-                        <td>{o.contact_name || o.contact_email || '-'}</td>
-                        <td>{o.zone_name || '-'}</td>
-                        <td>AED {Number(o.total_aed || 0).toLocaleString()}</td>
+                        <td className="font-mono font-semibold">{o.order_ref || o.reference || o.id?.slice(0,8)}</td>
+                        <td>{o.customer_name || o.customer_email || o.contact_name || o.contact_email || '-'}</td>
+                        <td>{o.freezone || o.zone_name || '-'}{o.package_name ? ` · ${o.package_name}` : ''}</td>
+                        <td>AED {Number(o.final_total ?? o.total_aed ?? 0).toLocaleString()}</td>
                         <td>
                           <select
                             defaultValue={o.status || 'new'}

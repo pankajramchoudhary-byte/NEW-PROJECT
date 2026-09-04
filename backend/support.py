@@ -243,6 +243,8 @@ async def create_ticket(body: TicketIn, authorization: Optional[str] = Header(de
         suggestion = await suggest_reply(
             subject=body.subject, latest_message=body.message,
             ticket_id=tid, history=[],
+            priority=doc.get("priority", "medium"),
+            ticket_category=doc.get("category"),
         )
         await _tickets.update_one({"_id": tid}, {"$set": {
             "ai_status": "suggested" if suggestion.get("action") == "suggested" else suggestion.get("action"),
@@ -259,9 +261,11 @@ async def create_ticket(body: TicketIn, authorization: Optional[str] = Header(de
                 "body": (suggestion.get("reply") or "")[:4000],
                 "created_at": _now(),
             })
-            await _tickets.update_one({"_id": tid},
-                {"$set": {"first_response_at": _now(),
-                          "ai_status": "auto_replied"}})
+            auto_set = {"first_response_at": _now(), "ai_status": "auto_replied"}
+            if cfg.get("auto_resolve", True):
+                auto_set["status"] = "resolved"
+                auto_set["resolved_at"] = _now()
+            await _tickets.update_one({"_id": tid}, {"$set": auto_set})
     except Exception as _e:
         logger.warning("[support] AI suggestion failed for %s: %s", tid, _e)
 
@@ -474,18 +478,16 @@ async def list_for_user(email: str, authorization: Optional[str] = Header(defaul
         raise HTTPException(403, "Not allowed")
     cursor = _tickets.find({"customer_email": email.lower()}).sort("created_at", -1).limit(50)
     rows = [doc async for doc in cursor]
+    return {"tickets": [_ticket_doc(r) for r in rows]}
 
 
 # ----------  Attachments (Supabase Storage, signed URLs) ----------
 SUPPORT_BUCKET = os.environ.get("SUPPORT_ATTACHMENTS_BUCKET", "support-attachments")
+# Must stay in sync with the Supabase bucket's allowed_mime_types, otherwise
+# the browser PUT fails after we have already handed out a signed URL.
 ALLOWED_MIME = {
-    "image/png", "image/jpeg", "image/webp", "image/gif",
+    "image/png", "image/jpeg", "image/webp",
     "application/pdf",
-    "application/msword",
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    "application/vnd.ms-excel",
-    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    "text/plain", "text/csv",
 }
 MAX_ATTACHMENT_BYTES = int(os.environ.get("SUPPORT_ATTACHMENT_MAX_BYTES", str(10 * 1024 * 1024)))
 
