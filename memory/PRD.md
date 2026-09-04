@@ -1,46 +1,40 @@
-# SmartSetupUAE — PRD
+# SmartSetupUAE — PRD / Working Memory
 
-## Original problem statement
-Existing full app (React marketing frontend + Next.js admin + FastAPI backend, deployed to Hostinger).
-Requested: (1) Support Analytics in admin, (2) Attachments on customer + admin tickets via Supabase Storage,
-(3) AI "Generate AI reply" button in admin ticket workspace (accept SUGGEST_ONLY draft),
-(4) Renewal reminders auto-opening tickets 30/14/3 days before licence expiry via SLA cron,
-(5) **MAIN**: Recommendation engine must show the exact recommended freezone/mainland licence per activity.
-Also: auto emails, AI search, checkout alignment, and customer support manageable from admin.
+**Product**: UAE business-setup platform. React customer portal + FastAPI backend + Next.js admin.
+Data: Supabase (auth, Postgres, storage `cilents-documents`) + MongoDB (`smartsetupuae`).
 
-## Architecture
-- Frontend: CRA (React 18, craco, Tailwind, shadcn), Supabase REST for data, FastAPI backend for AI.
-- Admin: Next.js app (own JWT auth), talks to shared Mongo + Supabase service role.
-- Backend: FastAPI + Mongo (support tickets, SLA, AI logs) + Supabase (packages, activities, leads) + Emergent LLM (Claude) + Gemini.
+## Original problem statement (session 1)
+1. Support Analytics (resolution time, SLA %, AI resolution + escalation over 7/30/90d) — DONE
+2. Attachments on tickets (customer + admin, MIME/size validation, signed URLs) — DONE
+3. AI suggested-reply button in admin ticket workspace — DONE
+4. Renewal reminders 30/14/3 days before licence expiry via SLA cron — DONE (blocked: no `licenses` table)
+5. Recommendation engine showing the exact right freezone/mainland licence — DONE
+6. Checkout page aligned with admin + customer pages — DONE
 
-## Implemented (2026-06)
-- **Recommendation engine (MAIN)**: `frontend/src/lib/activitySearchService.js` now AI-first.
-  `buildLiveRecommendation` calls `/api/aria/smart-rank` (Gemini specialisation ranker: Gold→DMCC,
-  Media→SHAMS, Aviation→DAFZA, Software→IFZA, etc.), enriches each AI zone with the live Supabase
-  package (price/visas/package_id), and falls back to the deterministic client rules on timeout/empty.
-  Regulated activities (crypto/finance/clinical/broadcast) keep the hard-filtered client guardrail.
-  AI summary surfaced in AISearch. Hard timeouts (6s packages / 10s AI) prevent hangs. VERIFIED via curl.
-- **Support Analytics**: backend `GET /api/support/analytics?days=7|30|90` (resolution time, SLA compliance %,
-  AI resolution + escalation rates). Admin page `/admin/support-analytics` + nav item + api route.
-- **Attachments**: backend sign-upload / sign-download endpoints on tickets (MIME + size validation, signed URLs,
-  bucket `SUPPORT_ATTACHMENTS_BUCKET`). Wired into customer SupportPortal and admin ticket workspace.
-- **AI Suggested Reply**: admin ticket detail surfaces the stored SUGGEST_ONLY `ai_suggestion` with a one-click
-  "Generate AI reply" button (backend `/api/admin/ai-support/suggest/{id}` also exists for regeneration).
-- **Renewal reminders**: `sla.py` tick now scans Supabase licence table and idempotently opens support tickets +
-  emails 30/14/3 days before expiry (`renewal_tickets` count in tick response).
-- **Unified support store**: admin `ticketService.js` rewritten to operate on the SAME Mongo
-  `support_tickets`/`support_messages` the customer portal uses → customer tickets are now managed from admin.
+## Session 2 (June 2026) — delivered
+- **Recommendation relevance**: `rankActivities()` in `frontend/src/lib/activitySearchService.js`
+  (exact > starts-with > whole-word > substring, de-dupe). "VARA" no longer returns unrelated rows.
+- **Start Application fixed**: passes `freezone=<slug>` + `package=<uuid>` to checkout; lead-save
+  failure is non-blocking. Verified Gold Trading → DMCC Nook AED 10,345 pre-selected.
+- **Checkout ↔ admin ↔ dashboard alignment**: orders persist `order_ref`; readers use
+  `final_total`/`freezone`/`package_name`/`order_ref`; admin revenue/clients use `final_total`.
+- **Attachment previews**: image thumbnails (signed URL) + size badges both portals; admin
+  sign-upload validates MIME + 10 MB; bucket = `cilents-documents`.
+- **Auto-Reply Mode**: gated AUTO_REPLY (category + priority allow-lists, confidence ≥ 0.8,
+  not requires_human, optional auto-resolve). Admin UI card on Support Analytics. Default: Suggest only.
+- **Per-zone investor visa price**: seeded Supabase `freezone_pricing`; `getVisaPrice(zone)` live
+  (IFZA 5,750). New **Admin → Pricing → Per-Zone Government Costs** editor.
+- Bug fix: `/api/support/tickets/by-user/{email}` missing return.
+- Tests: `/app/test_reports/iteration_1.json` (backend 8/8 + frontend flows + mobile).
 
-## Verified
-- Backend: `/api/` 200, `/api/sla/tick` 200 (cron key) / 401 (bad key), ticket create (SUP-000001),
-  analytics 403 without staff, smart-rank returns correct specialised zones.
+## In progress — Python → Node migration (user decision: port FastAPI into the Next.js app)
+Phase 1 modules written: `admin/lib/support/{customerAuth,gemini,aiSupport,supportEmail}.js`.
+Remaining Phase 1 + Phases 2-4 detailed in **/app/HANDOFF.md** (read that first).
 
-## Not visually verified
-- Admin (Next.js) is not run in this preview sandbox — admin changes delivered as code.
-- AI-search result page rendering could not be captured because the preview screenshot tool repeatedly
-  aborted/reloaded the SPA (net::ERR_ABORTED); logic + backend are verified.
-
-## Backlog / next
-- P1: Wire customer attachment upload UX polish; admin attachment thumbnails.
-- P1: Checkout ↔ admin/customer alignment review.
-- P2: Confirm Supabase `licenses` table schema for renewal source; create `support-attachments` bucket.
+## Backlog
+- **P0** DMCC / DAFZA / Meydan investor-visa costs need real values (seeded with 5,912 placeholder).
+- **P0** Finish Phase 1 migration (tickets, Aria, SLA/cron routes + vercel.json cron).
+- **P1** Point renewal scan at a real licence table (`RENEWAL_SOURCE_TABLE`), or create `licenses`.
+- **P1** Admin "Generate AI reply" must repoint to the ported endpoint after migration.
+- **P2** Phases 2-4 (lifecycle, referrals, careers, Stripe, notifications, OCR/photo) then delete `/app/backend`.
+- **P2** Unify ticket storage: admin `tickets` vs backend `support_tickets` dual-source.
