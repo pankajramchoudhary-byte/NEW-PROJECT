@@ -259,7 +259,7 @@ export function getPrebookingAmount() {
 export async function listUserOrders(email) {
   if (!email) return [];
   try {
-    const q = `?select=*&contact_email=eq.${encodeURIComponent(email.toLowerCase())}&order=created_at.desc&limit=20`;
+    const q = `?select=*&customer_email=eq.${encodeURIComponent(email.toLowerCase())}&order=created_at.desc&limit=20`;
     const rows = await supabaseRest.select('checkout_orders', q);
     return rows || [];
   } catch (e) {

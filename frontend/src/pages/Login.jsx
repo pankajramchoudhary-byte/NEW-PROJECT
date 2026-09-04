@@ -47,10 +47,11 @@ export default function Login() {
       toast({ title: 'Authentication failed', description: result.error });
       return;
     }
-    const adminRoles = ['admin', 'manager', 'staff', 'reviewer'];
-    const userRole = result.user?.role;
-    const destination = redirectQuery || (isAdminLogin ? '/admin' : (userRole && adminRoles.includes(userRole) ? '/admin' : '/dashboard'));
-    const variant = (isAdminLogin || (userRole && adminRoles.includes(userRole))) ? 'admin' : 'client';
+    // The customer login must always land in the customer portal. Staff use
+    // the separate Next.js admin login at /admin/login.
+    const clientRedirect = redirectQuery && !redirectQuery.startsWith('/admin') ? redirectQuery : null;
+    const destination = isAdminLogin ? '/admin' : (clientRedirect || '/dashboard');
+    const variant = isAdminLogin ? 'admin' : 'client';
     setSplash({ name: result.user?.name || data.name || data.email.split('@')[0], variant, redirectTo: destination });
   };
 

@@ -215,9 +215,9 @@ router = APIRouter(prefix="/api/admin/ai-support", tags=["ai-support"])
 
 
 async def _require_admin(authorization: Optional[str]) -> Dict[str, Any]:
-    from support import _resolve_caller_role, _is_staff  # type: ignore
-    caller = await _resolve_caller_role(authorization)
-    if not _is_staff(caller.get("role", "")):
+    from auth_utils import is_staff, resolve_caller_role
+    caller = await resolve_caller_role(authorization)
+    if not is_staff(caller.get("role", "")):
         raise HTTPException(403, "Staff role required")
     return caller
 

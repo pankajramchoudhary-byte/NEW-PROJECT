@@ -12,7 +12,6 @@
  */
 import React, { useState } from 'react';
 import { ChevronDown } from 'lucide-react';
-import DOMPurify from 'dompurify';
 
 export default function PageFAQ({ title, intro, items = [], testId = 'page-faq' }) {
   const [open, setOpen] = useState(0);
@@ -57,16 +56,9 @@ export default function PageFAQ({ title, intro, items = [], testId = 'page-faq' 
         </div>
         <script
           type="application/ld+json"
-          // Safe: JSON-LD is wrapped in <script type="application/ld+json"> (browsers
-          // do NOT execute it as JS). Content is built from page constants only.
-          // We still escape any `</` to prevent HTML breakout, and sanitize via DOMPurify.
-          dangerouslySetInnerHTML={{
-            __html: DOMPurify.sanitize(
-              JSON.stringify(ld).replace(/<\/(script)/gi, '<\\/$1'),
-              { USE_PROFILES: { html: false } },
-            ),
-          }}
-        />
+        >
+          {JSON.stringify(ld).replace(/</g, '\\u003c')}
+        </script>
       </div>
     </section>
   );

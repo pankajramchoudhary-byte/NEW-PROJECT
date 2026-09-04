@@ -205,6 +205,7 @@ export default function Checkout() {
         zone_name: matched.name,
         package_id: matched.package_id || matched.selection_id || null,
         package_name: matched.package_name || matched.name,
+        visa_count: Math.min(Number(d.visa_count || 0), Math.max(0, Number(matched.visa_quota || 0))),
         contact: {
           ...d.contact,
           name: d.contact.name || params.get('name') || '',
@@ -227,7 +228,13 @@ export default function Checkout() {
   const zones = availableZones;
   const addonsData = availableAddons;
   const selectedPackageKey = draft.package_id || draft.zone_slug;
-  const currentZone = zones.find((z) => (z.package_id || z.selection_id || z.slug) === selectedPackageKey) || zones[0] || null;
+  const hasLockedSelection = Boolean(
+    params.get('freezone') || params.get('zone') || params.get('slug') || params.get('package') || params.get('pkg') || params.get('package_id')
+  );
+  const currentZone = zones.find((z) => (z.package_id || z.selection_id || z.slug) === selectedPackageKey)
+    || (hasLockedSelection ? null : zones[0])
+    || null;
+  const selectableZones = hasLockedSelection && currentZone ? [currentZone] : zones;
   const originalServiceFee = currentZone?.svc || getDefaultServiceFee();
   const serviceFeeAfterDiscount = selectedCoupon.appliesTo === 'service' ? 0 : originalServiceFee;
   const packageDiscount = selectedCoupon.appliesTo === 'package' ? Math.round((currentZone?.gov || 0) * (selectedCoupon.percent / 100)) : 0;
@@ -602,7 +609,7 @@ export default function Checkout() {
                   {(() => {
                     // Group packages by zone_slug + zone_name
                     const byZone = new Map();
-                    zones.forEach((z) => {
+                    selectableZones.forEach((z) => {
                       const key = z.slug || z.zone_slug || z.name;
                       if (!byZone.has(key)) byZone.set(key, { name: z.name, slug: key, items: [] });
                       byZone.get(key).items.push(z);
@@ -628,6 +635,7 @@ export default function Checkout() {
                                   zone_name: cheapest.name,
                                   package_id: cheapest.package_id || cheapest.selection_id || null,
                                   package_name: cheapest.package_name || cheapest.name,
+                                  visa_count: Math.min(Number(d.visa_count || 0), Math.max(0, Number(cheapest.visa_quota || 0))),
                                 }));
                               }}
                               data-testid={`zone-card-${zg.slug}`}
@@ -664,7 +672,14 @@ export default function Checkout() {
                       <label className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">{currentZone?.name} package</label>
                       <Select value={selectedPackageKey} onValueChange={(key) => {
                         const z = zones.find((x) => (x.package_id || x.selection_id || x.slug) === key);
-                        if (z) setDraft((d) => ({ ...d, zone_slug: z.slug, zone_name: z.name, package_id: z.package_id || null, package_name: z.package_name || z.name }));
+                        if (z) setDraft((d) => ({
+                          ...d,
+                          zone_slug: z.slug,
+                          zone_name: z.name,
+                          package_id: z.package_id || null,
+                          package_name: z.package_name || z.name,
+                          visa_count: Math.min(Number(d.visa_count || 0), Math.max(0, Number(z.visa_quota || 0))),
+                        }));
                       }}>
                         <SelectTrigger className="mt-1 h-11 rounded-lg" data-testid="package-select"><SelectValue /></SelectTrigger>
                         <SelectContent>
@@ -688,7 +703,7 @@ export default function Checkout() {
                       <SelectTrigger className="mt-1 h-11 rounded-lg text-sm"><SelectValue /></SelectTrigger>
                       <SelectContent>
                         {(() => {
-                          const cap = Number(currentZone?.visa_quota || 0) || 5;
+                          const cap = Number(currentZone?.visa_quota || 0);
                           return Array.from({ length: cap + 1 }, (_, n) => (
                             <SelectItem key={n} value={String(n)}>{n}</SelectItem>
                           ));

@@ -21,6 +21,7 @@ import logging
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any, List
 from fastapi import APIRouter, Depends, HTTPException, Header, Query
+from auth_utils import is_staff, resolve_caller_role
 
 logger = logging.getLogger(__name__)
 
@@ -172,9 +173,8 @@ router = APIRouter(prefix="/api/admin/email-logs", tags=["email-logs"])
 
 # Lazy import of role resolver to avoid circulars
 async def _require_staff(authorization: Optional[str]) -> Dict[str, Any]:
-    from support import _resolve_caller_role, _is_staff  # type: ignore
-    caller = await _resolve_caller_role(authorization)
-    if not _is_staff(caller.get("role", "")):
+    caller = await resolve_caller_role(authorization)
+    if not is_staff(caller.get("role", "")):
         raise HTTPException(403, "Staff role required")
     return caller
 

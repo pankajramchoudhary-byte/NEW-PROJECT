@@ -25,6 +25,7 @@ from typing import Optional, List, Dict, Any
 from fastapi import APIRouter, HTTPException, Header
 from pydantic import BaseModel
 import httpx
+from auth_utils import is_staff, resolve_caller_role
 
 logger = logging.getLogger(__name__)
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "").rstrip("/")
@@ -48,36 +49,8 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-async def _resolve_caller_role(authorization: Optional[str]) -> Dict[str, str]:
-    """Return {id, email, role} for the JWT, or anon for unauth callers."""
-    if not authorization or not authorization.startswith("Bearer "):
-        return {"id": "", "email": "", "role": "anon"}
-    token = authorization.split(" ", 1)[1]
-    try:
-        async with httpx.AsyncClient(timeout=8) as cli:
-            r = await cli.get(
-                f"{SUPABASE_URL}/auth/v1/user",
-                headers={"apikey": SUPABASE_SERVICE_KEY, "Authorization": f"Bearer {token}"},
-            )
-            if r.status_code != 200:
-                return {"id": "", "email": "", "role": "anon"}
-            u = r.json() or {}
-            uid, email = u.get("id", ""), u.get("email", "")
-            # role lookup
-            rp = await cli.get(
-                f"{SUPABASE_URL}/rest/v1/profiles",
-                params={"select": "role", "id": f"eq.{uid}"},
-                headers={"apikey": SUPABASE_SERVICE_KEY, "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}"},
-            )
-            rows = rp.json() if rp.status_code == 200 else []
-            role = (rows[0].get("role") if rows else "client").lower()
-            return {"id": uid, "email": email, "role": role}
-    except Exception:
-        return {"id": "", "email": "", "role": "anon"}
-
-
-def _is_staff(role: str) -> bool:
-    return role in ("admin", "manager", "staff", "reviewer", "founder")
+_resolve_caller_role = resolve_caller_role
+_is_staff = is_staff
 
 
 # ----------  Aria first-reply (best-effort) ----------
